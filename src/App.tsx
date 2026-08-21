@@ -46,6 +46,7 @@ import Papa from "papaparse";
 import * as topojson from "topojson-client";
 import { SankeyChart } from "./components/SankeyChart";
 import { CompareACsView } from "./components/CompareACsView";
+import { Analytics } from "@vercel/analytics/react";
 
 
 // ==========================================
@@ -2736,6 +2737,7 @@ export default function App() {
           )}
         </div>
       </footer>
+      <Analytics />
     </div>
   );
 }
