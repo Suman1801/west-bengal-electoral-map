@@ -843,7 +843,61 @@ export default function App() {
             }
             
             
-setAllData(csvDataMap);
+
+          // --- ENRICHMENT PASS ---
+          // The 2026 data file might be missing demographic/geographic info. 
+          // We can backfill it using historical data for the same constituency or candidate!
+          const constituencyMeta = new Map();
+          const candidateMeta = new Map();
+
+          csvDataMap.forEach((record) => {
+            // Collect constituency data
+            if (record.sub_region || record.district_name || (record.reserved && record.reserved !== "GEN")) {
+              if (!constituencyMeta.has(record.ac_no)) {
+                constituencyMeta.set(record.ac_no, { sub_region: record.sub_region, district_name: record.district_name, reserved: record.reserved });
+              } else {
+                const existing = constituencyMeta.get(record.ac_no);
+                if (!existing.sub_region && record.sub_region) existing.sub_region = record.sub_region;
+                if (!existing.district_name && record.district_name) existing.district_name = record.district_name;
+                if ((!existing.reserved || existing.reserved === "GEN") && record.reserved && record.reserved !== "GEN") existing.reserved = record.reserved;
+              }
+            }
+
+            // Collect candidate data
+            if (record.age || record.education || record.sex) {
+               const candKey = String(record.candidate).toLowerCase().trim();
+               if (!candidateMeta.has(candKey)) {
+                 candidateMeta.set(candKey, { age: record.age, education: record.education, sex: record.sex });
+               } else {
+                 const existing = candidateMeta.get(candKey);
+                 if (!existing.age && record.age) existing.age = record.age;
+                 if (!existing.education && record.education) existing.education = record.education;
+                 if (!existing.sex && record.sex) existing.sex = record.sex;
+               }
+            }
+          });
+
+          // Apply enrichment
+          csvDataMap.forEach((record) => {
+            const acMeta = constituencyMeta.get(record.ac_no);
+            if (acMeta) {
+              if (!record.sub_region) record.sub_region = acMeta.sub_region;
+              if (!record.district_name) record.district_name = acMeta.district_name;
+              // Only override reserved if we have a better value
+              if ((!record.reserved || record.reserved === "GEN") && acMeta.reserved && acMeta.reserved !== "GEN") record.reserved = acMeta.reserved;
+            }
+
+            const candMeta = candidateMeta.get(String(record.candidate).toLowerCase().trim());
+            if (candMeta) {
+              if (!record.age) record.age = candMeta.age;
+              if (!record.education) record.education = candMeta.education;
+              if (!record.sex) record.sex = candMeta.sex;
+            }
+          });
+          // --- END ENRICHMENT ---
+          
+          setAllData(csvDataMap);
+
           }
         } catch (e) {
           console.warn("CSV processing failed:", e);
