@@ -26,6 +26,12 @@ export const SankeyChart: React.FC<SankeyChartProps> = ({
   yearB = "Current Poll",
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
+  const [tooltip, setTooltip] = React.useState<{
+    show: boolean;
+    x: number;
+    y: number;
+    text: string;
+  }>({ show: false, x: 0, y: 0, text: "" });
 
   // Group nodes by type (source vs target) to create legends
   const uniqueParties = useMemo(() => {
@@ -86,9 +92,33 @@ export const SankeyChart: React.FC<SankeyChartProps> = ({
       .attr("d", sankeyLinkHorizontal())
       .attr("stroke", (d: any, i: number) => `url(#gradient-${i})`)
       .attr("stroke-opacity", isDark ? 0.4 : 0.25)
-      .attr("stroke-width", (d: any) => Math.max(1, d.width));
-
-    link.append("title").text((d: any) => `${d.source.name} → ${d.target.name}\n${d.value} seats`);
+      .attr("stroke-width", (d: any) => Math.max(1, d.width))
+      .style("cursor", "pointer")
+      .on("mouseover", function (e: MouseEvent, d: any) {
+         d3.select(this).attr("stroke-opacity", isDark ? 0.8 : 0.6);
+         setTooltip({
+            show: true,
+            x: e.clientX,
+            y: e.clientY,
+            text: d.source.name === d.target.name
+              ? `${d.source.name} retained ${d.value} seats`
+              : `${d.target.name} has got ${d.value} seats from ${d.source.name}`
+         });
+      })
+      .on("mousemove", function (e: MouseEvent, d: any) {
+         setTooltip({
+            show: true,
+            x: e.clientX,
+            y: e.clientY,
+            text: d.source.name === d.target.name
+              ? `${d.source.name} retained ${d.value} seats`
+              : `${d.target.name} has got ${d.value} seats from ${d.source.name}`
+         });
+      })
+      .on("mouseout", function (e: MouseEvent, d: any) {
+         d3.select(this).attr("stroke-opacity", isDark ? 0.4 : 0.25);
+         setTooltip(prev => ({ ...prev, show: false }));
+      });
 
     // Nodes
     const node = svg
@@ -210,6 +240,24 @@ export const SankeyChart: React.FC<SankeyChartProps> = ({
           height={height - 60}
           className="overflow-visible"
         />
+        {tooltip.show && (
+          <div
+            className={cn(
+              "fixed z-50 pointer-events-none px-3 py-2 text-sm font-semibold rounded shadow-xl transform -translate-x-1/2 -translate-y-full",
+              isDark ? "bg-slate-800 text-white border border-slate-700" : "bg-[#222] text-white"
+            )}
+            style={{
+              left: tooltip.x,
+              top: tooltip.y - 15,
+            }}
+          >
+            {tooltip.text}
+            <div className={cn(
+               "absolute left-1/2 bottom-0 transform -translate-x-1/2 translate-y-full w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent",
+               isDark ? "border-t-slate-800" : "border-t-[#222]"
+            )}></div>
+          </div>
+        )}
       </div>
     </div>
   );

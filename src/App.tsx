@@ -25,6 +25,7 @@ import {
   Linkedin,
   Globe,
   Users,
+
 } from "lucide-react";
 import {
   PieChart,
@@ -638,7 +639,9 @@ export default function App() {
             let currentFileName = suffix.endsWith(".csv") ? suffix : `${activeState.id}${suffix}.csv`;
 
             try {
-              const csvResponse = await fetch(`/${currentFileName}`);
+              const csvResponse = await fetch(`/${currentFileName}`, {
+                cache: "no-store",
+              });
               if (!csvResponse.ok) continue;
               
               const fetchText = await csvResponse.text();
@@ -846,13 +849,13 @@ export default function App() {
             
 
           // --- ENRICHMENT PASS ---
-          // The 2026 data file might be missing demographic/geographic info. 
-          // We can backfill it using historical data for the same constituency or candidate!
+          // The 2026 data file is missing demographic/geographic info (it only has votes).
+          // We MUST backfill it using historical data to make the dashboard fully functional.
           const constituencyMeta = new Map();
           const candidateMeta = new Map();
 
           csvDataMap.forEach((record) => {
-            // Collect constituency data
+            // Collect constituency data (this never changes between elections)
             if (record.sub_region || record.district_name || (record.reserved && record.reserved !== "GEN")) {
               if (!constituencyMeta.has(record.ac_no)) {
                 constituencyMeta.set(record.ac_no, { sub_region: record.sub_region, district_name: record.district_name, reserved: record.reserved });
@@ -868,12 +871,16 @@ export default function App() {
             if (record.age || record.education || record.sex) {
                const candKey = String(record.candidate).toLowerCase().trim();
                if (!candidateMeta.has(candKey)) {
-                 candidateMeta.set(candKey, { age: record.age, education: record.education, sex: record.sex });
+                 candidateMeta.set(candKey, { age: record.age, education: record.education, sex: record.sex, baseYear: record.year });
                } else {
                  const existing = candidateMeta.get(candKey);
-                 if (!existing.age && record.age) existing.age = record.age;
-                 if (!existing.education && record.education) existing.education = record.education;
-                 if (!existing.sex && record.sex) existing.sex = record.sex;
+                 // Prefer more recent data if available
+                 if (Number(record.year) >= Number(existing.baseYear)) {
+                    if (record.age) existing.age = record.age;
+                    if (record.education) existing.education = record.education;
+                    if (record.sex) existing.sex = record.sex;
+                    existing.baseYear = record.year;
+                 }
                }
             }
           });
@@ -884,15 +891,22 @@ export default function App() {
             if (acMeta) {
               if (!record.sub_region) record.sub_region = acMeta.sub_region;
               if (!record.district_name) record.district_name = acMeta.district_name;
-              // Only override reserved if we have a better value
               if ((!record.reserved || record.reserved === "GEN") && acMeta.reserved && acMeta.reserved !== "GEN") record.reserved = acMeta.reserved;
             }
 
             const candMeta = candidateMeta.get(String(record.candidate).toLowerCase().trim());
             if (candMeta) {
-              if (!record.age) record.age = candMeta.age;
               if (!record.education) record.education = candMeta.education;
               if (!record.sex) record.sex = candMeta.sex;
+              // Adjust age approximately if crossing years
+              if (!record.age && candMeta.age) {
+                 const yearDiff = Number(record.year) - Number(candMeta.baseYear);
+                 if (yearDiff > 0 && !isNaN(yearDiff)) {
+                    record.age = Number(candMeta.age) + yearDiff;
+                 } else {
+                    record.age = candMeta.age;
+                 }
+              }
             }
           });
           // --- END ENRICHMENT ---
@@ -1694,7 +1708,7 @@ export default function App() {
 
             {geoJsonData && (
               <GeoJSON
-                key={`${activeState.id}`}
+                key={`${activeState.id}-${year}-${metric}`}
                 data={geoJsonData}
                 style={styleFeature}
                 onEachFeature={onEachFeature}
@@ -1728,7 +1742,7 @@ export default function App() {
           {/* Visitor Count Badge */}
           <div className="absolute bottom-6 left-6 z-[1000] pointer-events-none">
             <img 
-              src={`https://komarev.com/ghpvc/?username=wb-electoral-map-unique-142&label=VISITORS&color=blue&style=flat&base=141`} 
+              src={`https://komarev.com/ghpvc/?username=wb-electoral-map-unique-142&label=VISITORS&color=blue&style=flat&base=141&t=${Date.now()}`} 
               alt="Visitors" 
               className={cn(
                 "h-[22px] rounded-sm shadow-sm pointer-events-auto",
@@ -1901,6 +1915,7 @@ export default function App() {
 
                           return (
                             <div className="space-y-4">
+                              
                               <div
                                 className="flex flex-col gap-1.5 p-3 rounded-lg"
                                 style={{
@@ -2269,23 +2284,7 @@ export default function App() {
                       Visualize how constituencies shifted between parties from {previousYear || "the previous election"} to {year}.
                     </p>
                   </div>
-                  {availableYears.length > 1 && (
-                    <div className="flex flex-col items-end gap-2">
-                       <label className="text-xs font-bold uppercase tracking-wider opacity-70">Compare With</label>
-                       <select 
-                         className={cn(
-                            "px-3 py-1.5 rounded border text-sm font-semibold outline-none",
-                            isDark ? "bg-slate-800 border-slate-700 text-white" : "bg-white border-slate-300 text-black"
-                         )}
-                         value={previousYear || ""}
-                         onChange={(e) => setSankeyCompareYearOverride(e.target.value)}
-                       >
-                          {availableYears.filter(y => y !== String(year)).map(y => (
-                             <option key={y} value={y}>{y}</option>
-                          ))}
-                       </select>
-                    </div>
-                  )}
+                  {/* Compare With dropdown removed by user request */}
                 </div>
                 
                 <div className="flex-1 min-h-[500px] w-full">
