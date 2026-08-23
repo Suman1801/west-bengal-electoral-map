@@ -1,0 +1,161 @@
+
+    loadRawData();
+  }, [activeState]);
+
+  useEffect(() => {
+    if (!geoJsonData || !geoJsonData.features || allData.size === 0) return;
+
+    try {
+        const data = geoJsonData;
+        const csvDataMap = allData;
+
+        // Generate metrics using CSV, or fallback
+        const newDataMap = new Map();
+        const newCounts = getLegendConfig(metric).map((c) => ({
+          ...c,
+          count: 0,
+        }));
+        const pCounts: Record<string, number> = {};
+
+        data.features.forEach((feature: any) => {
+          const rawId = feature.properties?.AC_NO || feature.properties?.ac_no || feature.properties?.id || Math.random();
+          const id = String(rawId).trim().replace(/^0+/, "") || "0";
+
+          let record =
+            csvDataMap.get(`${activeState.stateCode}_${id}_${year}`) ||
+            csvDataMap.get(`${activeState.id}_${id}_${year}`);
+
+          // Fallback: match by AC name if ID doesn't match (e.g., pre-2008 delimitation)
+          if (!record) {
+             const featureAcName = feature.properties?.AC_NAME || feature.properties?.ac_name;
+             if (featureAcName) {
+                 const searchName = String(featureAcName).trim().toLowerCase();
+                 for (const candRecord of csvDataMap.values()) {
+                     if (candRecord.year === String(year)) {
+                         const candName = String(candRecord.ac_name).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+                         const sName = searchName.replace(/[^a-z0-9]/g, '');
+                         if (candName === sName || sName.includes(candName) || candName.includes(sName)) {
+                             record = candRecord;
+                             break;
+                         }
+                     }
+                 }
+             }
+          }
+
+          if (!record) {
+             feature.properties = {
+               ...feature.properties,
+               color: theme === "dark" ? "#334155" : "#cbd5e1",
+               ac_name: feature.properties?.AC_NAME || feature.properties?.ac_name || `AC ${id}`,
+               constituency_no: id,
+             };
+             newDataMap.set(id, feature);
+             return;
+          }
+
+          const partyKey = record.party_code || record.party || "IND";
+
+          // Augment with new metric fields if missing
+          record = {
+            ...record,
+            party: partyKey,
+            party_code: partyKey,
+            turnout: record.turnout_percentage || record.turnout || (record.electors > 0 ? (record.valid_votes / record.electors) * 100 : 0),
+            vote_share: record.vote_share_percentage || record.vote_share || (record.valid_votes > 0 ? (record.votes / record.valid_votes) * 100 : 0),
+            margin_pct: record.margin_percentage || record.margin_pct || (record.valid_votes > 0 ? ((record.votes - (record.runner_votes || 0)) / record.valid_votes) * 100 : 0),
+            sex: record.sex_ratio_female_per_1000_male || record.sex,
+            sex_ratio_female_per_1000_male: record.sex_ratio_female_per_1000_male || record.sex,
+            age: record.avg_elector_age || record.age,
+            avg_elector_age: record.avg_elector_age || record.age,
+            ac_name:
+              record.ac_name ||
+              feature.properties?.AC_NAME ||
+              feature.properties?.ac_name ||
+              `AC ${id}`,
+            reserved: ["GEN", "SC", "ST"].includes(
+              record.constituency_type?.toUpperCase(),
+            )
+              ? record.constituency_type.toUpperCase()
+              : "GEN",
+            constituency_no: id,
+          };
+
+          let color = theme === "dark" ? "#334155" : "#cbd5e1"; // Fallback missing data color
+
+          if (metric === "party" || metric === "candidate") {
+            color =
+              partyColorsRef.current[record.party_code] ||
+              partyColorsRef.current[record.party] ||
+              DEFAULT_PARTY_COLORS[record.party_code] ||
+              DEFAULT_PARTY_COLORS[record.party] ||
+              "#808080";
+            pCounts[record.party_code] = (pCounts[record.party_code] || 0) + 1;
+          } else if (
+            metric === "ac_name" ||
+            metric === "constituency_no"
+          ) {
+            const val =
+              metric === "ac_name"
+                ? record.ac_name
+                : record.constituency_no;
+            const strVal = String(val).trim().toUpperCase();
+            let hash = 0;
+            for (let i = 0; i < strVal.length; i++) {
+              hash = strVal.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const hue = Math.abs(hash % 360);
+            color = `hsl(${hue}, ${theme === "dark" ? 60 : 70}%, ${theme === "dark" ? 60 : 50}%)`;
+            if (metric === "lok_sabha") {
+              pCounts[strVal] = (pCounts[strVal] || 0) + 1;
+            }
+          } else if (metric === "reserved") {
+            if (record.reserved === "SC") color = "#4F46E5";
+            else if (record.reserved === "ST") color = "#059669";
+            else color = "#F59E0B";
+            pCounts[record.reserved] = (pCounts[record.reserved] || 0) + 1;
+            const bin = newCounts.find((b: any) => b.code === record.reserved);
+            if (bin) bin.count++;
+          } else {
+            let val = record.votes;
+            if (metric === "vote_share") val = record.vote_share;
+            if (metric === "turnout") val = record.turnout;
+            if (metric === "margin_pct") val = record.margin_pct;
+            if (metric === "safety") val = record.margin_pct;
+            if (metric === "electors") val = record.electors;
+            if (metric === "valid_votes") val = record.valid_votes;
+            if (metric === "sex") val = record.sex;
+            if (metric === "age") val = record.age;
+
+            for (const bin of newCounts) {
+              if (val > bin.min) {
+                color = bin.color;
+                bin.count++;
+                break;
+              }
+            }
+          }
+
+          newDataMap.set(String(id), { ...record, color });
+        });
+
+        setFeatureData(newDataMap);
+        setLegendCounts(newCounts);
+        setPartyCounts(pCounts);
+    } catch (e: any) {
+        console.error("Failed to map features", e);
+    }
+  }, [allData, geoJsonData, metric, theme, year, activeState]);
+
+  useEffect(() => {
+    setSankeyCompareYearOverride(null);
+  }, [year]);
+
+  const previousYear = useMemo(() => {
+    if (sankeyCompareYearOverride) return sankeyCompareYearOverride;
+    const idx = availableYears.indexOf(String(year));
+    if (idx !== -1 && idx < availableYears.length - 1) {
+      return availableYears[idx + 1];
+    }
+    return null;
+  }, [availableYears, year, sankeyCompareYearOverride]);

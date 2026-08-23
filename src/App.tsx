@@ -542,12 +542,7 @@ export default function App() {
   >([]);
 
   // Simulated data state for the choropleth
-  const [featureData, setFeatureData] = useState<Map<string, any>>(new Map());
   const [allData, setAllData] = useState<Map<string, any>>(new Map());
-  const [legendCounts, setLegendCounts] = useState<
-    { label: string; color: string; count: number }[]
-  >([]);
-  const [partyCounts, setPartyCounts] = useState<Record<string, number>>({});
   const [partyColors, setPartyColors] = useState<Record<string, string>>({});
 
   const trendData = React.useMemo(() => {
@@ -609,18 +604,24 @@ export default function App() {
     return { data: chartData, topParties: uniqueTop5Parties };
   }, [allData, activeState.id, availableYears, year]);
   
+  const partyColorsRef = useRef<Record<string, string>>({});
+
   useEffect(() => {
     async function fetchColors() {
       try {
         const res = await fetch("/party_colors.json");
-        if (res.ok) setPartyColors(await res.json());
+        if (res.ok) {
+           const colors = await res.json();
+           setPartyColors(colors);
+           partyColorsRef.current = colors;
+        }
       } catch (e) {}
     }
     fetchColors();
   }, []);
 
   useEffect(() => {
-    async function fetchData() {
+    async function loadRawData() {
       setIsLoading(true);
       setError(null);
       // Keeping previous geoJsonData for smooth transitions!
@@ -634,9 +635,13 @@ export default function App() {
           const fileSuffixes = ["", "-2026", "_2026", " 2026", "-new"];
           const explicitFiles = ["wb-results-2026.csv", "West_Bengal_AE.csv"];
           
-          for (const suffix of [...fileSuffixes, ...explicitFiles]) {
+          const allFiles = [...explicitFiles, ...fileSuffixes.map(s => s.endsWith(".csv") ? s : `${activeState.id}${s}.csv`)];
+
+          for (const currentFileName of allFiles) {
             let csvData: any[] | null = null;
-            let currentFileName = suffix.endsWith(".csv") ? suffix : `${activeState.id}${suffix}.csv`;
+
+            // We want to load the historical file to discover available years and enrich 2026 data.
+            // If performance is an issue, consider a Web Worker or pre-processing later.
 
             try {
               const csvResponse = await fetch(`/${currentFileName}`, {
@@ -646,12 +651,20 @@ export default function App() {
               
               const fetchText = await csvResponse.text();
               if (fetchText && !fetchText.trim().toLowerCase().startsWith("<!doctype")) {
-                const csvParsed = Papa.parse(fetchText, {
-                  header: true,
-                  dynamicTyping: true,
-                  skipEmptyLines: true,
+                await new Promise<void>((resolve, reject) => {
+                  const rows: any[] = [];
+                  Papa.parse(fetchText, {
+                    header: true,
+                    dynamicTyping: true,
+                    skipEmptyLines: true,
+                    step: (row) => rows.push(row.data),
+                    complete: () => {
+                      csvData = rows;
+                      resolve();
+                    },
+                    error: (err) => reject(err),
+                  });
                 });
-                csvData = csvParsed.data;
               }
             } catch (e) {
               continue;
@@ -938,6 +951,28 @@ export default function App() {
                data = topojson.feature(rawData, rawData.objects[key]);
             }
         }
+        
+        setGeoJsonData(data);
+      } catch (e: any) {
+        console.error("Failed to load raw map data", e);
+        setError(
+          "Failed to load constituency boundary data. Ensure valid local geojson files in public/ directory.",
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadRawData();
+  }, [activeState]);
+
+  const { featureData, legendCounts, partyCounts } = useMemo(() => {
+    const defaultRes = { featureData: new Map<string, any>(), legendCounts: [] as { label: string; color: string; count: number }[], partyCounts: {} };
+    if (!geoJsonData || !geoJsonData.features || allData.size === 0) return defaultRes;
+
+    try {
+        const data = geoJsonData;
+        const csvDataMap = allData;
 
         // Generate metrics using CSV, or fallback
         const newDataMap = new Map();
@@ -1015,8 +1050,8 @@ export default function App() {
 
           if (metric === "party" || metric === "candidate") {
             color =
-              partyColors[record.party_code] ||
-              partyColors[record.party] ||
+              partyColorsRef.current[record.party_code] ||
+              partyColorsRef.current[record.party] ||
               DEFAULT_PARTY_COLORS[record.party_code] ||
               DEFAULT_PARTY_COLORS[record.party] ||
               "#808080";
@@ -1069,26 +1104,16 @@ export default function App() {
           newDataMap.set(String(id), { ...record, color });
         });
 
-        setFeatureData(newDataMap);
-        setLegendCounts(newCounts);
-        setPartyCounts(pCounts);
-        setGeoJsonData(data);
-      } catch (e: any) {
-        console.error("Failed to load map data", e);
-        setError(
-          "Failed to load constituency boundary data. Ensure valid local geojson files in public/ directory.",
-        );
-      } finally {
-        setIsLoading(false);
-      }
+        return { featureData: newDataMap, legendCounts: newCounts, partyCounts: pCounts };
+    } catch (e: any) {
+        console.error("Failed to map features", e);
+        return { featureData: new Map<string, any>(), legendCounts: [] as { label: string; color: string; count: number }[], partyCounts: {} };
     }
-
-    // We want to refetch logic if metric changes to recalculate colors for quantitative metrics vs categorical
-    fetchData();
-  }, [activeState, metric, partyColors, theme, year]);
+  }, [allData, geoJsonData, metric, theme, year, activeState]);
 
   useEffect(() => {
     setSankeyCompareYearOverride(null);
+    setSelectedFeature(null);
   }, [year]);
 
   const previousYear = useMemo(() => {
@@ -1293,7 +1318,7 @@ export default function App() {
           setSelectedFeature({
             feature,
             data,
-            name: `${name} ${data?.year ? `(${data.year})` : ""}`,
+            name: name,
           });
         },
       });
@@ -1313,7 +1338,6 @@ export default function App() {
             <div class="flex flex-col">
               <span class="text-[9px] uppercase tracking-wider font-extrabold mb-0.5 ${isDark ? "text-slate-500" : "text-slate-400"}">Winner</span>
               <div class="flex items-center gap-1.5 mt-0.5 mb-1">
-                <img src="/logos/${data.party_code || data.party || 'IND'}.png" onerror="this.onerror=null; this.src=window.getFallbackLogoUrl('${data.party_code || data.party || 'IND'}', '${partyColors[data.party_code] || partyColors[data.party] || DEFAULT_PARTY_COLORS[data.party_code] || DEFAULT_PARTY_COLORS[data.party] || "#888"}');" class="w-5 h-5 object-contain rounded-full bg-white shadow-sm border border-black/10 p-px" />
                 <span class="px-1.5 py-0.5 rounded text-white text-[10px] font-black w-fit" style="background-color: ${partyColors[data.party_code] || partyColors[data.party] || DEFAULT_PARTY_COLORS[data.party_code] || DEFAULT_PARTY_COLORS[data.party] || "#888"};">
                   ${data.party || data.party_code || "IND"}
                 </span>
@@ -1741,9 +1765,7 @@ export default function App() {
           </MapContainer>
           {/* Visitor Count Badge */}
           <div className="absolute bottom-6 left-6 z-[1000] pointer-events-none">
-            <img 
-              src={`https://komarev.com/ghpvc/?username=wb-electoral-map-unique-142&label=VISITORS&color=blue&style=flat&base=141&t=${Date.now()}`} 
-              alt="Visitors" 
+            <img               src={React.useMemo(() => `https://komarev.com/ghpvc/?username=wb-electoral-map-unique-142&label=VISITORS&color=blue&style=flat&base=141&t=${Date.now()}`, [])}               alt="Visitors" 
               className={cn(
                 "h-[22px] rounded-sm shadow-sm pointer-events-auto",
                 isDark ? "opacity-90 hover:opacity-100" : ""
@@ -1937,18 +1959,6 @@ export default function App() {
                                   </span>
                                   <div className="flex flex-col items-end">
                                     <div className="flex items-center gap-2">
-                                      {(data.party || data.party_code) && (
-                                        <img
-                                          src={`/logos/${data.party_code || data.party}.png`}
-                                          alt={data.party}
-                                          className="w-6 h-6 object-contain rounded-full bg-white border border-black/10 shadow-sm p-0.5"
-                                          onError={(e) => {
-                                            const target = e.target as HTMLImageElement;
-                                            target.onerror = null;
-                                            target.src = getFallbackLogoUrl(data.party_code || data.party, partyColors[data.party_code] || partyColors[data.party] || DEFAULT_PARTY_COLORS[data.party_code] || DEFAULT_PARTY_COLORS[data.party]);
-                                          }}
-                                        />
-                                      )}
                                       <span
                                         className="font-bold px-2.5 py-1 rounded shadow-sm text-white text-xs border border-black/10"
                                         style={{
@@ -2507,18 +2517,6 @@ export default function App() {
                                   borderColor: "rgba(0,0,0,0.1)",
                                 }}
                               ></div>
-                              {metric === "party" && (
-                                <img
-                                  src={`/logos/${name.split(' - ')[0] || name}.png`}
-                                  alt={name}
-                                  className="w-5 h-5 object-contain rounded-full bg-white shadow-sm border border-slate-200 p-[1px] ml-1 hidden sm:block"
-                                  onError={(e) => {
-                                    const target = e.target as HTMLImageElement;
-                                    target.onerror = null;
-                                    target.src = getFallbackLogoUrl(name.split(' - ')[0] || name, color);
-                                  }}
-                                />
-                              )}
                               <span
                                 className={cn(
                                   "font-semibold truncate max-w-[140px]",
