@@ -1765,7 +1765,9 @@ export default function App() {
           </MapContainer>
           {/* Visitor Count Badge */}
           <div className="absolute bottom-6 left-6 z-[1000] pointer-events-none">
-            <img               src={React.useMemo(() => `https://komarev.com/ghpvc/?username=wb-electoral-map-unique-142&label=VISITORS&color=blue&style=flat&base=141&t=${Date.now()}`, [])}               alt="Visitors" 
+            <img 
+              src={`https://api.visitorbadge.io/api/visitors?path=wb-electoral-map-unique-145&label=VISITORS&countColor=%23007ec6`}
+              alt="Visitors" 
               className={cn(
                 "h-[22px] rounded-sm shadow-sm pointer-events-auto",
                 isDark ? "opacity-90 hover:opacity-100" : ""
