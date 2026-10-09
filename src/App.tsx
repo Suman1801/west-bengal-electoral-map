@@ -1423,10 +1423,10 @@ export default function App() {
     setSearchResults(results.slice(0, 10)); // Limit to top 10 matches
   }, [searchQuery, geoJsonData, featureData]);
 
-  // CartoDB tile URLs based on theme
+  // Basemap tile URLs based on theme (Esri Canvas Base: free, no API key required)
   const tileUrl = isDark
-    ? "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png"
-    : "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png";
+    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+    : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -1722,12 +1722,10 @@ export default function App() {
             <CustomZoomControl isDark={isDark} bounds={bounds} />
 
             <TileLayer
-              url={isDark 
-                ? "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png" 
-                : "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png"}
-              subdomains="abcd"
-              maxZoom={20}
-              className="opacity-70 grayscale-[30%] transition-opacity"
+              key={isDark ? "esri-dark" : "esri-light"}
+              url={tileUrl}
+              maxZoom={16}
+              className="opacity-75 transition-opacity"
             />
 
             {geoJsonData && (
